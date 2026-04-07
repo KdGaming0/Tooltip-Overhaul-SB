@@ -75,6 +75,7 @@ tasks {
         inputs.property("version", project.property("mod.version"))
         inputs.property("minecraft", project.property("mod.mc_dep"))
 
+        inputs.property("fabric_api", project.property("deps.fabric_api"))
         inputs.property("fabric_loader", project.property("deps.fabric_loader"))
 
         inputs.property("midnightlib_version", project.property("deps.midnightlib_version"))
@@ -89,6 +90,7 @@ tasks {
             "version" to project.property("mod.version"),
             "minecraft" to project.property("mod.mc_dep"),
 
+            "fabric_api" to project.property("deps.fabric_api"),
             "fabric_loader" to project.property("deps.fabric_loader"),
 
             "midnightlib_version" to project.property("deps.midnightlib_version"),

@@ -15,7 +15,7 @@
   "icon": "assets/tooltip-overhaul-sb/icon.png",
   "environment": "*",
   "entrypoints": {
-    "main": [
+    "client": [
       "com.kd_gaming1.tooltipoverhaulsb.TooltipOverhaulSB"
     ]
   },
@@ -24,9 +24,9 @@
   ],
   "accessWidener": "tooltip-overhaul-sb.accesswidener",
   "depends": {
-    "fabricloader": ">=${fabricloader}",
+    "fabricloader": ">=${fabric_loader}",
     "fabric-api": ">=${fabric_api}",
     "minecraft": "~${minecraft}",
-    "uilib": ">=${ui_lib}"
+    "uilib": ">=${uilib_version}"
   }
 }
