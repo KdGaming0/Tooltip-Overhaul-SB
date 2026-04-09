@@ -2,8 +2,10 @@
   "required": true,
   "package": "com.kd_gaming1.tooltipoverhaulsb.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [
-
+  "mixins": [],
+  "client": [
+    "GuiGraphicsAccessor",
+    "TooltipInterceptMixin"
   ],
   "injectors": {
     "defaultRequire": 1
