@@ -6,16 +6,20 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
- * Two-column stat row: {@code "label ·····  value"} with dot fill.
+ * Two-column stat row: {@code "label ·····  value"} with middle-dot fill.
  *
- * <p>The dot string is pre-built using arithmetic on the single-dot width
- * rather than measuring an accumulating StringBuilder each iteration.
+ * <p>Stat values are color-coded: green for positive, red for negative.
+ * The dot leader uses middle dots (·) for a lighter, cleaner look.
  */
 public record StatLine(String label, String value, int labelColor, int valueColor)
         implements DrawEntry {
 
     private static final int LINE_H = TooltipLayoutBuilder.LINE_H;
-    private static final int DOT_COLOR = 0xFF555555;
+    private static final int DOT_COLOR = 0xFF444444;
+    private static final char DOT_CHAR = '\u00B7'; // middle dot ·
+
+    private static final int POSITIVE_COLOR = 0xFF55FF55; // green
+    private static final int NEGATIVE_COLOR = 0xFFFF5555; // red
 
     @Override public int height() { return LINE_H; }
 
@@ -38,17 +42,31 @@ public record StatLine(String label, String value, int labelColor, int valueColo
             g.drawString(f, dots, x + labelW, y, DOT_COLOR, false);
         }
 
-        g.drawString(f, value, x + totalWidth - valueW, y, valueColor, false);
+        // Color-code the value based on sign
+        int actualValueColor = resolveValueColor(value, valueColor);
+        g.drawString(f, value, x + totalWidth - valueW, y, actualValueColor, false);
     }
 
     /**
-     * Builds a dot-fill string using arithmetic instead of measuring
+     * Determines value color based on the leading sign character.
+     * Positive values (+) render green, negative values (-) render red.
+     * Falls back to the default valueColor for neutral/unsigned values.
+     */
+    private static int resolveValueColor(String value, int defaultColor) {
+        String trimmed = value.trim();
+        if (trimmed.startsWith("+")) return POSITIVE_COLOR;
+        if (trimmed.startsWith("-")) return NEGATIVE_COLOR;
+        return defaultColor;
+    }
+
+    /**
+     * Builds a middle-dot fill string using arithmetic instead of measuring
      * an accumulating string. O(n) instead of O(n²).
      */
     private static String buildDots(Font f, int targetPixels) {
-        int dotW = f.width(".");
+        int dotW = f.width(String.valueOf(DOT_CHAR));
         if (dotW <= 0) return " ";
         int count = targetPixels / dotW;
-        return ".".repeat(Math.max(0, count));
+        return String.valueOf(DOT_CHAR).repeat(Math.max(0, count));
     }
 }

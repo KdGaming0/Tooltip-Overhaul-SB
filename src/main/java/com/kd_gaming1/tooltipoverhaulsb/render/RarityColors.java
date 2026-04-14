@@ -13,7 +13,7 @@ import java.util.Map;
  * <ul>
  *   <li><strong>Text</strong> — item name, footer, stars</li>
  *   <li><strong>Badge background</strong> — darker tones for the pill badges</li>
- *   <li><strong>Border</strong> — semi-transparent overlay for the tooltip frame</li>
+ *   <li><strong>Border</strong> — higher-opacity overlay for the tooltip frame tint</li>
  * </ul>
  */
 public final class RarityColors {
@@ -45,15 +45,15 @@ public final class RarityColors {
         BADGE.put(Rarity.SPECIAL,      0xFF3D0000);
         BADGE.put(Rarity.VERY_SPECIAL, 0xFF3D0000);
 
-        BORDER.put(Rarity.COMMON,       0x55FFFFFF);
-        BORDER.put(Rarity.UNCOMMON,     0x5555FF55);
-        BORDER.put(Rarity.RARE,         0x555555FF);
-        BORDER.put(Rarity.EPIC,         0x55AA00AA);
-        BORDER.put(Rarity.LEGENDARY,    0x55FFAA00);
-        BORDER.put(Rarity.MYTHIC,       0x55FF55FF);
-        BORDER.put(Rarity.DIVINE,       0x5555FFFF);
-        BORDER.put(Rarity.SPECIAL,      0x55FF5555);
-        BORDER.put(Rarity.VERY_SPECIAL, 0x55FF5555);
+        BORDER.put(Rarity.COMMON,       0xAAFFFFFF);
+        BORDER.put(Rarity.UNCOMMON,     0xAA55FF55);
+        BORDER.put(Rarity.RARE,         0xAA5555FF);
+        BORDER.put(Rarity.EPIC,         0xAAAA00AA);
+        BORDER.put(Rarity.LEGENDARY,    0xAAFFAA00);
+        BORDER.put(Rarity.MYTHIC,       0xAAFF55FF);
+        BORDER.put(Rarity.DIVINE,       0xAA55FFFF);
+        BORDER.put(Rarity.SPECIAL,      0xAAFF5555);
+        BORDER.put(Rarity.VERY_SPECIAL, 0xAAFF5555);
     }
 
     /** Rarity colour for item name, footer text, and stars. */
@@ -66,9 +66,9 @@ public final class RarityColors {
         return BADGE.getOrDefault(r, 0xFF333333);
     }
 
-    /** Semi-transparent border overlay colour. */
+    /** Higher-opacity border colour for frame tinting. */
     public static int borderColor(Rarity r) {
-        return BORDER.getOrDefault(r, 0x55FFFFFF);
+        return BORDER.getOrDefault(r, 0xAAFFFFFF);
     }
 
     /**

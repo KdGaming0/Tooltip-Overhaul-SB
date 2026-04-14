@@ -8,6 +8,8 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.tooltip.DefaultTooltipPositioner;
 import net.minecraft.client.gui.screens.inventory.tooltip.TooltipRenderUtil;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Vector2ic;
 
@@ -19,17 +21,13 @@ import org.joml.Vector2ic;
  *   <li>Obtain a measured {@link TooltipLayout} (from cache or fresh build)</li>
  *   <li>Position the tooltip on screen via {@link DefaultTooltipPositioner}</li>
  *   <li>Draw the background (vanilla sprite, resource-pack compatible)</li>
- *   <li>Draw the rarity border overlay</li>
+ *   <li>Draw the rarity-colored border using a tinted overlay of the frame sprite</li>
+ *   <li>Render the item icon in the top-left</li>
  *   <li>Iterate entries and draw each one</li>
  * </ol>
  *
  * <p>This class owns <em>no</em> layout or content decisions. Those live in
  * {@link TooltipLayoutBuilder} and the {@link DrawEntry} implementations.
- *
- * <h3>Z-ordering</h3>
- * The tooltip is rendered via the deferred tooltip system which calls
- * {@code graphics.nextStratum()} before executing. This places the tooltip
- * above inventory slot items automatically — no manual Z-translate is needed.
  *
  * <p>Stateless except for the layout cache.
  */
@@ -42,11 +40,20 @@ public final class SkyBlockTooltipRenderer {
 
     /**
      * Vanilla tooltip background uses 9px margin + 3px padding on each side.
-     * Content coordinates passed to TooltipRenderUtil are the inner content origin;
-     * the visual background extends further out.
      */
     private static final int BG_MARGIN  = 9;
     private static final int BG_PADDING = 3;
+
+    // Sprite identifiers for background and frame
+    private static final Identifier BACKGROUND_SPRITE =
+            Identifier.withDefaultNamespace("tooltip/background");
+    private static final Identifier FRAME_SPRITE =
+            Identifier.withDefaultNamespace("tooltip/frame");
+
+    /** Size of the item icon rendered in the top-left corner. */
+    private static final int ICON_SIZE = 16;
+    private static final int ICON_OFFSET_X = -2;
+    private static final int ICON_OFFSET_Y = -2;
 
     // =========================================================================
     // Public API
@@ -55,13 +62,6 @@ public final class SkyBlockTooltipRenderer {
     /**
      * Renders the complete SkyBlock tooltip for the given item data.
      * Called as a deferred runnable by the mixin interceptor.
-     *
-     * @param graphics current graphics context
-     * @param font     font to use for rendering
-     * @param data     parsed item data (never null, never empty)
-     * @param stack    the hovered ItemStack
-     * @param mouseX   cursor X position
-     * @param mouseY   cursor Y position
      */
     public static void render(
             GuiGraphics graphics, Font font,
@@ -84,17 +84,20 @@ public final class SkyBlockTooltipRenderer {
         int drawX = pos.x();
         int drawY = pos.y();
 
-        // ── render (Z already elevated by nextStratum in renderDeferredElements) ──
+        // ── render ───────────────────────────────────────────────────────
         graphics.pose().pushMatrix();
 
         // ── background (vanilla sprite → resource-pack compatible) ───────
         TooltipRenderUtil.renderTooltipBackground(
                 graphics, drawX, drawY, contentWidth, contentHeight, null);
 
-        // ── rarity border overlay ────────────────────────────────────────
+        // ── rarity border: tint the frame sprite with rarity color ────────
         if (TooltipOverhaulConfig.useRarityColors) {
-            drawRarityBorder(graphics, data, drawX, drawY, contentWidth, contentHeight);
+            drawTintedFrame(graphics, data, drawX, drawY, contentWidth, contentHeight);
         }
+
+        // ── item icon ───────────────────────────────────────────────
+        renderItemIcon(graphics, stack, drawX, drawY);
 
         // ── draw all entries ─────────────────────────────────────────────
         int innerWidth = contentWidth - padX * 2;
@@ -116,53 +119,62 @@ public final class SkyBlockTooltipRenderer {
     }
 
     // =========================================================================
-    // Border rendering
+    // Border rendering — tinted frame sprite overlay
     // =========================================================================
 
     /**
-     * Draws a 1px rarity-coloured border around the tooltip background sprite.
+     * Draws the vanilla frame sprite tinted with the rarity color.
      *
-     * <p>The vanilla background sprite extends from
-     * {@code (x - MARGIN - PADDING)} to {@code (x + w + MARGIN + PADDING)},
-     * so the border is drawn just outside that region.
+     * <p>Instead of drawing a separate 1px border outside the tooltip, we
+     * re-render the frame sprite (which is the 9-sliced border texture) with
+     * the rarity color applied as a tint. This produces a properly themed
+     * border that respects resource packs and looks integrated.
      */
-    private static void drawRarityBorder(
+    private static void drawTintedFrame(
             GuiGraphics g, SkyBlockItemData data,
             int x, int y, int w, int h) {
 
-        int bc = RarityColors.borderColor(data.rarity());
+        int color = RarityColors.borderColor(data.rarity());
 
-        // The visual background extends BG_MARGIN + BG_PADDING beyond the
-        // content origin on each side. Border sits 1px outside that.
-        int left   = x - BG_MARGIN - BG_PADDING - 1;
-        int top    = y - BG_MARGIN - BG_PADDING - 1;
-        int right  = x + w + BG_MARGIN + BG_PADDING + 1;
-        int bottom = y + h + BG_MARGIN + BG_PADDING + 1;
+        int x0 = x - BG_PADDING - BG_MARGIN;
+        int y0 = y - BG_PADDING - BG_MARGIN;
+        int paddedWidth  = w + BG_PADDING * 2 + BG_MARGIN * 2;
+        int paddedHeight = h + BG_PADDING * 2 + BG_MARGIN * 2;
 
-        // Top edge
-        g.fill(left, top,      right,     top + 1,    bc);
-        // Bottom edge
-        g.fill(left, bottom,   right,     bottom + 1, bc);
-        // Left edge
-        g.fill(left, top,      left + 1,  bottom + 1, bc);
-        // Right edge
-        g.fill(right - 1, top, right,     bottom + 1, bc);
+        // Render the frame sprite with the rarity color as a tint
+        g.blitSprite(RenderPipelines.GUI_TEXTURED, FRAME_SPRITE,
+                x0, y0, paddedWidth, paddedHeight, color);
+    }
+
+    // =========================================================================
+    // Item icon rendering
+    // =========================================================================
+
+    /**
+     * Renders the item's icon in the top-left corner of the tooltip.
+     * Positioned just inside the background padding area.
+     */
+    private static void renderItemIcon(
+            GuiGraphics g, ItemStack stack,
+            int tooltipX, int tooltipY) {
+
+        if (stack.isEmpty()) return;
+
+        int iconX = tooltipX + ICON_OFFSET_X;
+        int iconY = tooltipY + ICON_OFFSET_Y;
+
+        g.renderItem(stack, iconX, iconY);
     }
 
     // =========================================================================
     // Helpers
     // =========================================================================
 
-    /**
-     * Returns the current game tick for cache staleness checks.
-     * Falls back to system time if no level is loaded (e.g. main menu).
-     */
     private static long getCurrentTick() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level != null) {
             return mc.level.getGameTime();
         }
-        // Fallback: approximate tick from wall clock (20 ticks/sec)
         return System.currentTimeMillis() / 50;
     }
 }

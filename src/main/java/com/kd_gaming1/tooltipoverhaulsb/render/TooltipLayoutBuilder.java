@@ -33,6 +33,14 @@ public final class TooltipLayoutBuilder {
     public static final int MIN_WIDTH = 120;
     public static final int MAX_WIDTH = 320; // hard cap to prevent off-screen overflow
 
+    // --- D1: Consistent spacing constants ---
+    /** Gap between major sections (stats, enchants, abilities). */
+    public static final int SECTION_GAP     = 4;
+    /** Gap between subsections (e.g. before stats, before lore). */
+    public static final int SUB_SECTION_GAP = 3;
+    /** Small gap (e.g. after badges, between related elements). */
+    public static final int MINOR_GAP       = 2;
+
     // Badge styling
     public static final int BADGE_PAD_X  = 4;
     public static final int BADGE_PAD_Y  = 1;
@@ -93,12 +101,12 @@ public final class TooltipLayoutBuilder {
      * <h3>Section order (top → bottom)</h3>
      * <ol>
      *   <li>Title + stars</li>
-     *   <li>Badge row (rarity, type, HP count, BP)</li>
+     *   <li>Badge row (rarity, type, pet category, HP count, BP)</li>
      *   <li>Gem slots (with decorative separators)</li>
      *   <li>Pet XP bar (pets only, before stats)</li>
      *   <li>Gear score (dungeon items only)</li>
      *   <li>Stats</li>
-     *   <li>Enchantments</li>
+     *   <li>Enchantments (vanilla tooltip text, preserving other mod coloring)</li>
      *   <li>Special lines (drill parts, fuel, rune)</li>
      *   <li>Abilities (regular or pet-style)</li>
      *   <li>Lore</li>
@@ -157,26 +165,40 @@ public final class TooltipLayoutBuilder {
         out.add(new TitleLine(data.displayName(), color, stars, color));
     }
 
-    // --- 2. Badge row --------------------------------------------------------
+    // --- 2. Badge row (D2: pet category badge) --------------------------------
 
     private static void addBadgeRow(List<DrawEntry> out, SkyBlockItemData data) {
         List<BadgeRow.Badge> badges = new ArrayList<>();
 
+        // Rarity badge
         badges.add(new BadgeRow.Badge(
                 data.rarity().displayName(),
                 RarityColors.badgeBg(data.rarity()),
                 RarityColors.textColor(data.rarity())));
 
+        // Type badge (skip MISC for non-pet items)
         if (data.itemType() != ItemType.MISC) {
             badges.add(new BadgeRow.Badge(
                     data.itemType().name(), 0xFF2A2A2A, 0xFFAAAAAA));
         }
 
+        // D2: Pet category badge (e.g. "COMBAT", "MINING", "FARMING")
+        if (data.petData() != null) {
+            String category = data.petData().category();
+            if (category != null && !"UNKNOWN".equals(category)) {
+                int catBg    = petCategoryBadgeBg(category);
+                int catColor = petCategoryBadgeText(category);
+                badges.add(new BadgeRow.Badge(category, catBg, catColor));
+            }
+        }
+
+        // Hot potato count badge
         if (data.hotPotatoCount() != null && data.hotPotatoCount() > 0) {
             badges.add(new BadgeRow.Badge(
                     "HP " + data.hotPotatoCount(), 0xFF5A1A00, 0xFFFF8844));
         }
 
+        // Breaking power badge
         Integer bp = extractBreakingPower(data);
         if (bp != null) {
             badges.add(new BadgeRow.Badge(
@@ -184,7 +206,7 @@ public final class TooltipLayoutBuilder {
         }
 
         if (!badges.isEmpty()) {
-            out.add(new GapLine(2));
+            out.add(new GapLine(MINOR_GAP));
             out.add(new BadgeRow(badges));
         }
     }
@@ -203,7 +225,7 @@ public final class TooltipLayoutBuilder {
     // --- 4. Pet XP bar -------------------------------------------------------
 
     private static void addPetXpBar(List<DrawEntry> out, PetData pet) {
-        out.add(new GapLine(3));
+        out.add(new GapLine(SUB_SECTION_GAP));
         out.add(new PetXpBar(
                 pet.calculatedLevel() + 1,
                 pet.progressToNextLevel(),
@@ -211,7 +233,7 @@ public final class TooltipLayoutBuilder {
                 pet.expForNextLevel(),
                 pet.isMaxLevel(),
                 pet.rawExp()));
-        out.add(new GapLine(2));
+        out.add(new GapLine(MINOR_GAP));
     }
 
     // --- 5. Gear score -------------------------------------------------------
@@ -219,7 +241,7 @@ public final class TooltipLayoutBuilder {
     private static void addGearScore(List<DrawEntry> out, SkyBlockItemData data) {
         if (!TooltipOverhaulConfig.showGearScore || data.gearScore() == null) return;
 
-        out.add(new GapLine(3));
+        out.add(new GapLine(SUB_SECTION_GAP));
         String gs = "Gear Score: " + data.gearScore()
                 + (data.scaledGearScore() != null ? " (" + data.scaledGearScore() + ")" : "");
         out.add(new TextLine(gs, 0xFFAAAAAA));
@@ -230,7 +252,7 @@ public final class TooltipLayoutBuilder {
     private static void addStats(List<DrawEntry> out, SkyBlockItemData data) {
         if (data.stats().isEmpty()) return;
 
-        out.add(new GapLine(3));
+        out.add(new GapLine(SUB_SECTION_GAP));
         for (StatEntry stat : data.stats()) {
             String valuePart = extractValuePart(stat);
             out.add(new StatLine(stat.name(), valuePart, 0xFFAAAAAA, 0xFFFFFFFF));
@@ -246,12 +268,19 @@ public final class TooltipLayoutBuilder {
         if (colonIdx >= 0 && colonIdx < stat.rawLine().length() - 1) {
             return stat.rawLine().substring(colonIdx + 1).trim();
         }
-        // Fallback: format the numeric value
         return "+" + formatStatValue(stat.baseValue());
     }
 
-    // --- 7. Enchantments -----------------------------------------------------
+    // --- 7. Enchantments (C2: use vanilla tooltip text) -----------------------
 
+    /**
+     * Renders enchantments using the vanilla tooltip text preserved in
+     * the enchantments list. This preserves the original formatting and
+     * allows other mods that recolor enchants (e.g. SBA, NEU) to work.
+     *
+     * <p>Ultimate enchants are rendered on their own line in pink.
+     * Regular enchants are comma-separated and wrapped at available width.
+     */
     private static void addEnchants(List<DrawEntry> out, Font font, SkyBlockItemData data) {
         if (!TooltipOverhaulConfig.showEnchantments || data.enchantments().isEmpty()) return;
 
@@ -260,22 +289,23 @@ public final class TooltipLayoutBuilder {
         List<EnchantEntry> ultimates = new ArrayList<>();
         List<EnchantEntry> regular   = new ArrayList<>();
         for (EnchantEntry e : data.enchantments()) {
-            if (e.id().startsWith("ultimate_")) ultimates.add(e);
+            if (e.id().toLowerCase().startsWith("ultimate_")) ultimates.add(e);
             else regular.add(e);
         }
 
         // Ultimates: one per line, pink
         for (EnchantEntry e : ultimates) {
-            out.add(new TextLine(formatEnchant(e), 0xFFFF55FF));
+            out.add(new TextLine(formatEnchantName(e), 0xFFFF55FF));
         }
 
         // Regular: comma-separated, wrapped at available width
         int wrapWidth = MAX_WIDTH - PAD_X * 2;
         StringBuilder line = new StringBuilder();
         for (EnchantEntry e : regular) {
-            String formatted = formatEnchant(e);
+            String formatted = formatEnchantName(e);
             String sep = line.isEmpty() ? "" : ", ";
             int projectedWidth = font.width(line.toString() + sep + formatted);
+
             if (!line.isEmpty() && projectedWidth > wrapWidth) {
                 out.add(new TextLine(line.toString(), 0xFFFFFF55));
                 line.setLength(0);
@@ -295,14 +325,14 @@ public final class TooltipLayoutBuilder {
         boolean addedGap = false;
         for (String line : data.unknownLines()) {
             if (isKillsLine(line) || isBreakingPowerLine(line) || isFuelLine(line)) continue;
-            if (!addedGap) { out.add(new GapLine(2)); addedGap = true; }
+            if (!addedGap) { out.add(new GapLine(MINOR_GAP)); addedGap = true; }
             out.add(new TextLine(line, 0xFF888888));
         }
 
         // Fuel line rendered separately with spacing
         for (String line : data.unknownLines()) {
             if (isFuelLine(line)) {
-                out.add(new GapLine(2));
+                out.add(new GapLine(MINOR_GAP));
                 out.add(new TextLine(line, 0xFFAAAAAA));
                 break;
             }
@@ -315,7 +345,7 @@ public final class TooltipLayoutBuilder {
         if (!TooltipOverhaulConfig.showAbilities || data.abilities().isEmpty()) return;
 
         for (AbilityEntry ability : data.abilities()) {
-            out.add(new GapLine(3));
+            out.add(new GapLine(SECTION_GAP));
             String trigger = ability.trigger() != null ? "  " + ability.trigger() : "";
             out.add(new TextLine("Ability: " + ability.name() + trigger, 0xFF55FFFF));
 
@@ -351,7 +381,7 @@ public final class TooltipLayoutBuilder {
 
     private static void addLore(List<DrawEntry> out, SkyBlockItemData data) {
         if (data.loreLines().isEmpty()) return;
-        out.add(new GapLine(3));
+        out.add(new GapLine(SUB_SECTION_GAP));
         for (String lore : data.loreLines()) {
             out.add(new TextLine(lore, 0xFF888888));
         }
@@ -363,7 +393,7 @@ public final class TooltipLayoutBuilder {
         for (String line : data.unknownLines()) {
             Matcher m = KILLS_PATTERN.matcher(line.trim());
             if (m.matches()) {
-                out.add(new GapLine(3));
+                out.add(new GapLine(SUB_SECTION_GAP));
                 out.add(new TextLine("Kills: " + m.group(1), 0xFFFFFF55));
                 break;
             }
@@ -387,10 +417,10 @@ public final class TooltipLayoutBuilder {
 
     private static void addSoulbound(List<DrawEntry> out, SkyBlockItemData data) {
         if (data.isCoopSoulbound()) {
-            out.add(new GapLine(3));
+            out.add(new GapLine(SUB_SECTION_GAP));
             out.add(new TextLine("Co-op Soulbound", 0xFF55FFFF));
         } else if (data.isSoulbound()) {
-            out.add(new GapLine(3));
+            out.add(new GapLine(SUB_SECTION_GAP));
             out.add(new TextLine("Soulbound", 0xFF55FFFF));
         }
     }
@@ -398,14 +428,10 @@ public final class TooltipLayoutBuilder {
     // --- 14. Unknown lines ---------------------------------------------------
 
     private static void addUnknownLines(List<DrawEntry> out, SkyBlockItemData data) {
-        // Only add lines not already handled by addSpecialLines or addKills
         for (String line : data.unknownLines()) {
             if (isKillsLine(line) || isBreakingPowerLine(line) || isFuelLine(line)) continue;
-            // These are already emitted in addSpecialLines — skip to avoid duplication
+            // Already emitted in addSpecialLines
         }
-        // Intentionally empty: all unknown lines are already rendered in addSpecialLines.
-        // This method exists as a hook for future unknown-line categories (e.g. drill parts
-        // parsed separately). Keeping it avoids forgetting the slot in the layout order.
     }
 
     // --- 15. Rarity footer ---------------------------------------------------
@@ -427,10 +453,37 @@ public final class TooltipLayoutBuilder {
     // Formatting helpers
     // =========================================================================
 
-    private static String formatEnchant(EnchantEntry e) {
-        String name = e.id().replace('_', ' ');
-        name = Character.toUpperCase(name.charAt(0)) + name.substring(1);
-        return name + " " + toRoman(e.level());
+    /**
+     * Formats an enchant entry for display.
+     *
+     * <p>This is used as the display text for the compact enchant summary.
+     * The vanilla tooltip text is consumed by the parser, so this is the
+     * only place enchant names are formatted.
+     */
+    private static String formatEnchantName(EnchantEntry e) {
+        String id = e.id().toLowerCase();
+
+        // Strip "ultimate_" prefix for display — rendered separately with color
+        String nameBase = id.startsWith("ultimate_") ? id.substring("ultimate_".length()) : id;
+
+        // Title-case each word
+        String[] words = nameBase.split("_");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            if (i > 0) sb.append(' ');
+            String word = words[i];
+            if (!word.isEmpty()) {
+                sb.append(Character.toUpperCase(word.charAt(0)));
+                if (word.length() > 1) sb.append(word.substring(1));
+            }
+        }
+
+        // Add "Ultimate " prefix back for ultimate enchants displayed individually
+        if (id.startsWith("ultimate_")) {
+            sb.insert(0, "Ultimate ");
+        }
+
+        return sb + " " + toRoman(e.level());
     }
 
     private static String toRoman(int n) {
@@ -452,6 +505,40 @@ public final class TooltipLayoutBuilder {
         if (xp >= 1_000_000) return String.format("%.2fM", xp / 1_000_000.0);
         if (xp >= 1_000)     return String.format("%,.0f", xp);
         return String.format("%.0f", xp);
+    }
+
+    // =========================================================================
+    // Pet category badge colors (D2)
+    // =========================================================================
+
+    /** Dark background for pet category badges. */
+    private static int petCategoryBadgeBg(String category) {
+        return switch (category) {
+            case "COMBAT"     -> 0xFF3D1A1A;
+            case "MINING"     -> 0xFF1A2A3D;
+            case "FARMING"    -> 0xFF2A3D1A;
+            case "FISHING"    -> 0xFF1A3D3D;
+            case "FORAGING"   -> 0xFF3D2A1A;
+            case "ALCHEMY"    -> 0xFF2A1A3D;
+            case "ENCHANTING" -> 0xFF1A1A3D;
+            case "TAMING"     -> 0xFF3D3D1A;
+            default           -> 0xFF2A2A2A;
+        };
+    }
+
+    /** Text color for pet category badges. */
+    private static int petCategoryBadgeText(String category) {
+        return switch (category) {
+            case "COMBAT"     -> 0xFFFF5555;
+            case "MINING"     -> 0xFF55AAFF;
+            case "FARMING"    -> 0xFF55FF55;
+            case "FISHING"    -> 0xFF55FFFF;
+            case "FORAGING"   -> 0xFFFFAA55;
+            case "ALCHEMY"    -> 0xFFAA55FF;
+            case "ENCHANTING" -> 0xFF5555FF;
+            case "TAMING"     -> 0xFFFFFF55;
+            default           -> 0xFFAAAAAA;
+        };
     }
 
     // =========================================================================

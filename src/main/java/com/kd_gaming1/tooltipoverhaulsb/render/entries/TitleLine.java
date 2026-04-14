@@ -6,8 +6,11 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
- * Title row: item name on the left, star symbols on the right.
+ * Title row: item name on the left (offset for the item icon), star symbols on the right.
  * Stars are shown when {@code stars > 0} (dungeon upgrade level).
+ *
+ * <p>The title is offset rightward by {@link #ICON_SPACE} pixels to leave
+ * room for the item icon rendered by the tooltip renderer.
  */
 public record TitleLine(String name, int nameColor, int stars, int starColor)
         implements DrawEntry {
@@ -16,22 +19,30 @@ public record TitleLine(String name, int nameColor, int stars, int starColor)
     private static final char STAR_CHAR = TooltipLayoutBuilder.STAR_CHAR;
     private static final int MAX_STARS = 10;
 
-    @Override public int height() { return LINE_H; }
+    /** Horizontal space reserved for the item icon (16px icon + 2px gap). */
+    private static final int ICON_SPACE = 18;
+
+    @Override public int height() { return Math.max(LINE_H, 16); }
 
     @Override
     public int naturalWidth(Font f) {
-        int w = f.width(name);
+        int w = ICON_SPACE + f.width(name);
         if (stars > 0) w += 3 + f.width(buildStars());
         return w;
     }
 
     @Override
     public void draw(GuiGraphics g, Font f, int x, int y, int totalWidth) {
-        g.drawString(f, name, x, y, nameColor, false);
+        // Offset text to the right of the item icon space
+        int textX = x + ICON_SPACE;
+        int textY = y + (16 - LINE_H) / 2; // Vertically centre with 16px icon
+
+        g.drawString(f, name, textX, textY, nameColor, false);
+
         if (stars > 0) {
             String starStr = buildStars();
             int starX = x + totalWidth - f.width(starStr);
-            g.drawString(f, starStr, starX, y, starColor, false);
+            g.drawString(f, starStr, starX, textY, starColor, false);
         }
     }
 

@@ -8,6 +8,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,6 +23,8 @@ import java.util.regex.Pattern;
  *   <li>Unknown lines are never discarded — they flow into {@code unknownLines}.</li>
  *   <li>No item-specific hardcoding. All detection is pattern-based.</li>
  *   <li>Stat values are read from tooltip lines; enchant IDs/levels come from NBT.</li>
+ *   <li>Vanilla enchant description blocks are consumed so they don't duplicate
+ *       the compact NBT-sourced enchant section.</li>
  * </ul>
  */
 public final class TooltipLineClassifier {
@@ -62,25 +65,51 @@ public final class TooltipLineClassifier {
     private static final String SOULBOUND_TEXT       = "Soulbound";
     private static final String COOP_SOULBOUND_TEXT  = "Co-op Soulbound";
 
+    // --- Enchant description line pattern: "EnchantName Level" or
+    //     "EnchantName Level Number" (e.g. "Compact VII 146,962")
+    //     Also matches multi-word enchants like "Depth Strider III"
+    private static final Pattern ENCHANT_LINE_PATTERN =
+            Pattern.compile("^[A-Z][a-z]+(?: [A-Z][a-z]+)*\\s+(?:I{1,3}V?|VI{0,3}|IX|X|[1-9]\\d*)(?:\\s+[\\d,]+)?$");
+
+    // --- Enchant description continuation: "Increases damage dealt..."
+    //     Lines that start lowercase or describe what an enchant does
+    private static final Pattern ENCHANT_DESC_CONTINUATION =
+            Pattern.compile("^(?:[a-z]|Increases|Reduces|Grants|Gain|Heals|Adds).*");
+
+    // --- XP progress bar line (whitespace-heavy, e.g. "                          279,974.3/861.7k")
+    private static final Pattern XP_BAR_LINE_PATTERN =
+            Pattern.compile("^\\s+[\\d,.]+/[\\d,.]+[kKmM]?$");
+
+    // --- "MAX LEVEL" or "▸ 34,068,339 XP" lines
+    private static final Pattern MAX_LEVEL_PATTERN =
+            Pattern.compile("^(?:MAX LEVEL|▸\\s*[\\d,]+\\s*XP)$");
+
+    // --- Pet interaction lines
+    private static final Pattern PET_ACTION_PATTERN =
+            Pattern.compile("^(?:Right-click to add|Left-click to summon|Shift Left-click|Right-click to convert|Can be upgraded at).*");
+
     /**
      * Classifies all tooltip lines into typed sections.
      *
-     * @param lines raw tooltip lines (index 0 is the item name, already in displayName)
+     * @param lines         raw tooltip lines (index 0 is the item name, already in displayName)
+     * @param nbtEnchantIds set of enchant IDs from NBT (lowercase, underscored).
+     *                      Used to identify and consume vanilla enchant description blocks.
      * @return populated sections object
      */
-    public ParsedSections classify(List<String> lines) {
+    public ParsedSections classify(List<String> lines, Set<String> nbtEnchantIds) {
         ParsedSections out = new ParsedSections();
 
         ParseState state = ParseState.STATS;
         AbilityBuilder currentAbility = null;
         StringBuilder reforgeBonusBuffer = null;
+        boolean insideEnchantDescBlock = false;
 
         // Skip line 0 (display name — already parsed from ItemStack.getHoverName)
         for (int i = 1; i < lines.size(); i++) {
             String line = lines.get(i);
             String trimmed = line.trim();
 
-            // --- Empty line: reset transient ability/reforge states ---
+            // --- Empty line: reset transient states ---
             if (trimmed.isEmpty()) {
                 if (currentAbility != null) {
                     out.abilities.add(currentAbility.build());
@@ -91,20 +120,22 @@ public final class TooltipLineClassifier {
                     reforgeBonusBuffer = null;
                     state = ParseState.LORE;
                 }
+                insideEnchantDescBlock = false;
                 continue;
             }
 
-            // --- Soulbound ---
-            if (trimmed.equals(COOP_SOULBOUND_TEXT)) {
+            // --- Soulbound (with * decorators stripped) ---
+            String stripped = trimmed.replace("*", "").trim();
+            if (stripped.equals(COOP_SOULBOUND_TEXT)) {
                 out.isCoopSoulbound = true;
                 continue;
             }
-            if (trimmed.equals(SOULBOUND_TEXT)) {
+            if (stripped.equals(SOULBOUND_TEXT)) {
                 out.isSoulbound = true;
                 continue;
             }
 
-            // --- Last line: rarity ---
+            // --- Last line: rarity (handles "a MYTHIC SWORD a" format) ---
             if (i == lines.size() - 1) {
                 Rarity r = Rarity.fromTooltipLine(trimmed);
                 if (r != null) {
@@ -134,6 +165,7 @@ public final class TooltipLineClassifier {
                 if (currentAbility != null) out.abilities.add(currentAbility.build());
                 currentAbility = new AbilityBuilder(am.group(1), am.group(2));
                 state = ParseState.ABILITY;
+                insideEnchantDescBlock = false;
                 continue;
             }
 
@@ -141,12 +173,16 @@ public final class TooltipLineClassifier {
             if (state == ParseState.ABILITY && currentAbility != null) {
                 Matcher mm = MANA_PATTERN.matcher(trimmed);
                 Matcher cm = COOLDOWN_PATTERN.matcher(trimmed);
-                if (mm.find()) currentAbility.manaCost = mm.group(1);
-                if (cm.find()) currentAbility.cooldown = cm.group(1);
-                if (mm.find() || cm.find()) {
-                    out.abilities.add(currentAbility.build());
-                    currentAbility = null;
-                    state = ParseState.LORE;
+                boolean hasMana     = mm.find();
+                boolean hasCooldown = cm.find();
+
+                if (hasMana) currentAbility.manaCost = mm.group(1);
+                if (hasCooldown) currentAbility.cooldown = cm.group(1);
+
+                if (hasMana || hasCooldown) {
+                    // This is a meta line — consume it, don't add as desc
+                    // Only close the ability if this is a cooldown-only or final meta line
+                    // Don't close yet — wait for empty line to close naturally
                 } else {
                     currentAbility.descLines.add(trimmed);
                 }
@@ -157,6 +193,7 @@ public final class TooltipLineClassifier {
             if (REFORGE_BONUS_PATTERN.matcher(trimmed).matches()) {
                 reforgeBonusBuffer = new StringBuilder(trimmed).append("\n");
                 state = ParseState.REFORGE_BONUS;
+                insideEnchantDescBlock = false;
                 continue;
             }
 
@@ -167,10 +204,42 @@ public final class TooltipLineClassifier {
             }
 
             // --- Progress line (pets) ---
-            Matcher pm = PROGRESS_PATTERN.matcher(trimmed);
-            if (pm.matches()) {
-                // Parsed by PetLevelCalculator — skip to avoid double-processing
+            if (PROGRESS_PATTERN.matcher(trimmed).matches()) {
                 continue;
+            }
+
+            // --- XP bar numeric line (pets) ---
+            if (XP_BAR_LINE_PATTERN.matcher(line).matches()) {
+                continue;
+            }
+
+            // --- MAX LEVEL / XP total lines (pets) ---
+            if (MAX_LEVEL_PATTERN.matcher(trimmed).matches()) {
+                continue;
+            }
+
+            // --- Pet action lines ---
+            if (PET_ACTION_PATTERN.matcher(trimmed).matches()) {
+                out.loreLines.add(trimmed);
+                continue;
+            }
+
+            if (!nbtEnchantIds.isEmpty() && isEnchantHeader(trimmed, nbtEnchantIds)) {
+                insideEnchantDescBlock = true;
+                // Consume: don't add to unknownLines
+                continue;
+            }
+            if (insideEnchantDescBlock) {
+                // Consume continuation lines of enchant description
+                if (ENCHANT_DESC_CONTINUATION.matcher(trimmed).matches()
+                        || trimmed.endsWith(".")
+                        || trimmed.endsWith("%")
+                        || trimmed.endsWith("mobs by 30%")
+                        || trimmed.matches(".*\\d+%?\\.?$")) {
+                    continue;
+                }
+                // Not a continuation — fall through
+                insideEnchantDescBlock = false;
             }
 
             // --- Stat line ---
@@ -184,8 +253,6 @@ public final class TooltipLineClassifier {
             }
 
             // --- Lore / description (italic lines, flavour text) ---
-            // We detect lore heuristically: once stats/abilities are done,
-            // remaining non-matching lines are lore.
             if (state == ParseState.LORE || isLoreLine(trimmed)) {
                 out.loreLines.add(trimmed);
                 state = ParseState.LORE;
@@ -207,7 +274,35 @@ public final class TooltipLineClassifier {
         return out;
     }
 
+    /**
+     * Overload for backward compatibility — calls with empty enchant set.
+     */
+    public ParsedSections classify(List<String> lines) {
+        return classify(lines, Set.of());
+    }
+
     // --- Private helpers ---
+
+    /**
+     * Checks if a line is an enchant header by matching against known NBT enchant IDs.
+     * E.g., for NBT key "growth", matches "Growth V" or "Growth V".
+     * Also matches "Compact VII 146,962" (with counter).
+     */
+    private boolean isEnchantHeader(String trimmed, Set<String> nbtEnchantIds) {
+        // Quick structural check: must match "Word(s) RomanOrNumber [OptionalNumber]"
+        if (!ENCHANT_LINE_PATTERN.matcher(trimmed).matches()) return false;
+
+        // Extract the enchant name (everything before the Roman numeral / level)
+        String normalized = trimmed.replaceAll("\\s+\\d[\\d,]*$", "")  // strip trailing counter
+                .replaceAll("\\s+(?:I{1,3}V?|VI{0,3}|IX|X|\\d+)$", "") // strip level
+                .trim()
+                .toLowerCase()
+                .replace(' ', '_');
+
+        // Also try "ultimate_" prefix
+        return nbtEnchantIds.contains(normalized)
+                || nbtEnchantIds.contains("ultimate_" + normalized);
+    }
 
     @Nullable
     private StatEntry buildStatEntry(Matcher sm, String rawLine) {
@@ -237,9 +332,6 @@ public final class TooltipLineClassifier {
 
     /** Lines that are clearly lore: italic, start with "That thing", etc. */
     private boolean isLoreLine(String line) {
-        // Lore lines are typically short flavour text or descriptions
-        // starting with a non-stat character — no perfect heuristic exists,
-        // so we fall back to the state machine above.
         return false;
     }
 
